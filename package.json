@@ -1,0 +1,30 @@
+{
+  "name": "gym-bro",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "3.0.2",
+    "@react-navigation/native": "7.2.2",
+    "@react-navigation/native-stack": "7.14.12",
+    "expo": "55.0.19",
+    "expo-status-bar": "55.0.5",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "5.7.0",
+    "react-native-screens": "4.24.0",
+    "react-native-web": "0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "typescript": "5.9.3"
+  }
+}
