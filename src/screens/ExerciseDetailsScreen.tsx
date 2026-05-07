@@ -1,5 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View
+} from "react-native";
+import { LineChart } from "react-native-chart-kit";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
@@ -11,6 +18,7 @@ import {
   getWorkoutSessions
 } from "../storage/trainingStorage";
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 import type {
   Exercise,
   ExerciseSet,
@@ -27,6 +35,15 @@ type HistoryItem = ExerciseSet & {
   workoutDayId?: string;
 };
 
+type SessionPoint = {
+  date: string;
+  label: string;
+  maxKg: number;
+  maxReps: number;
+  volumeLoad: number;
+  setsCount: number;
+};
+
 function formatWeight(set: ExerciseSet) {
   return set.weightKg ? `${set.weightKg} kg` : set.weightLabel ?? "masa ciala";
 }
@@ -39,10 +56,34 @@ function formatResult(set?: ExerciseSet) {
   return `${formatWeight(set)} x ${set.reps}`;
 }
 
+function aggregateSessionForExercise(
+  session: WorkoutSession,
+  exerciseId: string
+): Omit<SessionPoint, "date" | "label"> {
+  const sets = session.sets.filter((set) => set.exerciseId === exerciseId);
+  const maxKg = sets.length ? Math.max(...sets.map((set) => set.weightKg ?? 0)) : 0;
+  const maxReps = sets.length ? Math.max(...sets.map((set) => set.reps)) : 0;
+  const volumeLoad = sets.reduce(
+    (sum, set) => sum + (set.weightKg ?? 0) * set.reps,
+    0
+  );
+
+  return {
+    maxKg,
+    maxReps,
+    volumeLoad,
+    setsCount: sets.length
+  };
+}
+
 export function ExerciseDetailsScreen({ route }: Props) {
+  const { width: windowWidth } = useWindowDimensions();
   const [exercise, setExercise] = useState<Exercise>();
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [workoutDays, setWorkoutDays] = useState<WorkoutDay[]>([]);
+
+  const workoutDayId = route.params.workoutDayId;
+  const exerciseId = route.params.exerciseId;
 
   useFocusEffect(
     useCallback(() => {
@@ -56,9 +97,7 @@ export function ExerciseDetailsScreen({ route }: Props) {
         ]);
 
         if (isActive) {
-          setExercise(
-            loadedExercises.find((item) => item.id === route.params.exerciseId)
-          );
+          setExercise(loadedExercises.find((item) => item.id === exerciseId));
           setSessions(
             loadedSessions.filter((session) => session.userId === currentUserId)
           );
@@ -71,15 +110,27 @@ export function ExerciseDetailsScreen({ route }: Props) {
       return () => {
         isActive = false;
       };
-    }, [route.params.exerciseId])
+    }, [exerciseId])
   );
+
+  const sessionsInScope = useMemo(
+    () =>
+      workoutDayId
+        ? sessions.filter((session) => session.workoutDayId === workoutDayId)
+        : sessions,
+    [sessions, workoutDayId]
+  );
+
+  const workoutDayName = workoutDayId
+    ? workoutDays.find((day) => day.id === workoutDayId)?.name
+    : undefined;
 
   const history = useMemo<HistoryItem[]>(
     () =>
-      sessions
+      sessionsInScope
         .flatMap((session) =>
           session.sets
-            .filter((set) => set.exerciseId === route.params.exerciseId)
+            .filter((set) => set.exerciseId === exerciseId)
             .map((set) => ({
               ...set,
               date: session.date,
@@ -87,7 +138,7 @@ export function ExerciseDetailsScreen({ route }: Props) {
             }))
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [route.params.exerciseId, sessions]
+    [exerciseId, sessionsInScope]
   );
 
   const lastSet = history[0];
@@ -99,43 +150,81 @@ export function ExerciseDetailsScreen({ route }: Props) {
 
     return weightDiff;
   })[0];
+
   const sessionsWithExercise = useMemo(
     () =>
-      sessions
+      sessionsInScope
         .filter((session) =>
-          session.sets.some((set) => set.exerciseId === route.params.exerciseId)
+          session.sets.some((set) => set.exerciseId === exerciseId)
         )
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [route.params.exerciseId, sessions]
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [exerciseId, sessionsInScope]
   );
-  const chartData = useMemo(
-    () =>
-      sessionsWithExercise
-        .slice()
-        .reverse()
-        .map((session) => {
-          const bestWeight = Math.max(
-            ...session.sets
-              .filter((set) => set.exerciseId === route.params.exerciseId)
-              .map((set) => set.weightKg ?? 0)
-          );
 
-          return {
-            date: session.date,
-            weight: bestWeight
-          };
-        })
-        .filter((item) => item.weight > 0)
-        .slice(-8),
-    [route.params.exerciseId, sessionsWithExercise]
-  );
-  const maxChartWeight = Math.max(...chartData.map((item) => item.weight), 1);
+  const chartPoints = useMemo<SessionPoint[]>(() => {
+    return sessionsWithExercise.map((session) => {
+      const agg = aggregateSessionForExercise(session, exerciseId);
 
-  function getWorkoutName(workoutDayId?: string) {
-    return (
-      workoutDays.find((workoutDay) => workoutDay.id === workoutDayId)?.name ??
-      "Trening"
+      return {
+        date: session.date,
+        label: session.date.slice(5),
+        ...agg
+      };
+    });
+  }, [exerciseId, sessionsWithExercise]);
+
+  const useKgMetric = chartPoints.some((point) => point.maxKg > 0);
+
+  const chartDataset = useMemo(() => {
+    if (chartPoints.length === 0) {
+      return { labels: [] as string[], data: [] as number[], legend: "" };
+    }
+
+    let labels = chartPoints.map((point) => point.label);
+    let data = chartPoints.map((point) =>
+      useKgMetric ? point.maxKg : point.maxReps
     );
+
+    if (data.length === 1) {
+      const singleLabel = labels[0] ?? "";
+      const singleVal = data[0] ?? 0;
+      labels = [singleLabel, singleLabel];
+      data = [singleVal, singleVal];
+    }
+
+    const legend = useKgMetric
+      ? "Najwyzszy ciezar w sesji (kg)"
+      : "Najwiecej powtorzen w serii (bez obciazenia)";
+
+    return { labels, data, legend };
+  }, [chartPoints, useKgMetric]);
+
+  const chartWidth = Math.min(Math.max(windowWidth - 36, 260), 560);
+  const lastSession = sessionsWithExercise.at(-1);
+  const lastVolume = lastSession
+    ? aggregateSessionForExercise(lastSession, exerciseId).volumeLoad
+    : 0;
+
+  const chartConfig = {
+    backgroundColor: colors.surface,
+    backgroundGradientFrom: colors.surface,
+    backgroundGradientTo: colors.surfaceHigh,
+    decimalPlaces: useKgMetric ? 1 : 0,
+    color: (opacity = 1) => `rgba(245, 200, 76, ${opacity})`,
+    labelColor: (opacity = 1) => `rgba(154, 164, 178, ${opacity})`,
+    propsForDots: {
+      r: "5",
+      strokeWidth: "2",
+      stroke: colors.primaryDark
+    },
+    propsForBackgroundLines: {
+      stroke: colors.border,
+      strokeDasharray: ""
+    }
+  };
+
+  function getWorkoutName(id?: string) {
+    return workoutDays.find((workoutDay) => workoutDay.id === id)?.name ?? "Trening";
   }
 
   return (
@@ -143,6 +232,11 @@ export function ExerciseDetailsScreen({ route }: Props) {
       <View style={styles.header}>
         <Text style={styles.title}>{exercise?.name ?? "Cwiczenie"}</Text>
         <Text style={styles.subtitle}>{exercise?.muscleGroup}</Text>
+        {workoutDayName ? (
+          <Text style={styles.scopeHint} numberOfLines={3}>
+            Zakres: trening „{workoutDayName}” — wykres i lista tylko z tego slotu.
+          </Text>
+        ) : null}
         {exercise?.techniqueDescription ? (
           <Text style={styles.description}>{exercise.techniqueDescription}</Text>
         ) : null}
@@ -159,53 +253,87 @@ export function ExerciseDetailsScreen({ route }: Props) {
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Progres</Text>
+      <Text style={styles.sectionTitle}>Progres w czasie</Text>
       <View style={styles.chartCard}>
-        {chartData.length === 0 ? (
-          <Text style={styles.emptyText}>Brak danych do wykresu.</Text>
+        {chartDataset.data.length === 0 ? (
+          <Text style={styles.emptyText}>Brak sesji z tym cwiczeniem w wybranym zakresie.</Text>
         ) : (
-          <View style={styles.chartRow}>
-            {chartData.map((item) => (
-              <View key={`${item.date}-${item.weight}`} style={styles.chartItem}>
-                <View style={styles.chartTrack}>
-                  <View
-                    style={[
-                      styles.chartBar,
-                      { height: `${Math.max(12, (item.weight / maxChartWeight) * 100)}%` }
-                    ]}
-                  />
+          <>
+            <Text style={styles.chartLegend}>{chartDataset.legend}</Text>
+            <LineChart
+              data={{
+                labels: chartDataset.labels,
+                datasets: [{ data: chartDataset.data }]
+              }}
+              width={chartWidth}
+              height={220}
+              chartConfig={chartConfig}
+              bezier
+              style={styles.lineChart}
+              withInnerLines
+              withOuterLines
+              withVerticalLabels
+              withHorizontalLabels
+              fromZero={!useKgMetric}
+            />
+            {sessionsWithExercise.length > 0 ? (
+              <View style={styles.chartMetaRow}>
+                <View style={styles.chartMetaItem}>
+                  <Text style={styles.chartMetaLabel}>Sesje na wykresie</Text>
+                  <Text style={styles.chartMetaValue}>{chartPoints.length}</Text>
                 </View>
-                <Text style={styles.chartValue}>{item.weight}</Text>
-                <Text style={styles.chartDate}>{item.date.slice(5)}</Text>
+                <View style={styles.chartMetaItem}>
+                  <Text style={styles.chartMetaLabel}>Ostatni volumen (kg × powt.)</Text>
+                  <Text style={styles.chartMetaValue}>
+                    {lastVolume > 0 ? Math.round(lastVolume) : "—"}
+                  </Text>
+                </View>
               </View>
-            ))}
-          </View>
+            ) : null}
+          </>
         )}
       </View>
 
-      <Text style={styles.sectionTitle}>Treningi</Text>
+      <Text style={styles.sectionTitle}>Sesje treningowe</Text>
       <View style={styles.list}>
-        {sessionsWithExercise.map((session) => {
-          const sets = session.sets.filter(
-            (set) => set.exerciseId === route.params.exerciseId
-          );
+        {sessionsWithExercise.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>Brak zapisanych sesji.</Text>
+          </View>
+        ) : (
+          [...sessionsWithExercise]
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .map((session) => {
+              const sets = session.sets.filter(
+                (set) => set.exerciseId === exerciseId
+              );
+              const agg = aggregateSessionForExercise(session, exerciseId);
 
-          return (
-            <View key={session.id} style={styles.historyCard}>
-              <Text style={styles.historyDate}>
-                Data: {session.date} · Trening: {getWorkoutName(session.workoutDayId)}
-              </Text>
-              <Text style={styles.historyMain}>
-                {sets.length} serii · najlepsza {formatResult(
-                  [...sets].sort((a, b) => (b.weightKg ?? 0) - (a.weightKg ?? 0))[0]
-                )}
-              </Text>
-            </View>
-          );
-        })}
+              return (
+                <View key={session.id} style={styles.historyCard}>
+                  <Text style={styles.historyDate}>
+                    {session.date} · {getWorkoutName(session.workoutDayId)}
+                  </Text>
+                  <Text style={styles.historyMain}>
+                    {sets.length} serii · szczyt{" "}
+                    {useKgMetric ? `${agg.maxKg} kg` : `${agg.maxReps} powt.`} · volumen{" "}
+                    {agg.volumeLoad > 0 ? `${Math.round(agg.volumeLoad)}` : "—"}
+                  </Text>
+                  <Text style={styles.historySub}>
+                    Najlepsza seria:{" "}
+                    {formatResult(
+                      [...sets].sort(
+                        (a, b) => (b.weightKg ?? 0) - (a.weightKg ?? 0)
+                      )[0]
+                    )}
+                  </Text>
+                </View>
+              );
+            })
+        )}
       </View>
 
-      <Text style={styles.sectionTitle}>Historia</Text>
+      <Text style={styles.sectionTitle}>Historia serii</Text>
       <View style={styles.list}>
         {history.length === 0 ? (
           <View style={styles.emptyCard}>
@@ -231,58 +359,50 @@ export function ExerciseDetailsScreen({ route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  chartCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+    overflow: "hidden",
+    padding: 14
+  },
+  chartLegend: {
+    color: colors.muted,
+    fontSize: t.body,
+    fontWeight: "700",
+    lineHeight: t.lineCaption
+  },
+  chartMetaItem: {
+    flex: 1
+  },
+  chartMetaLabel: {
+    color: colors.muted,
+    fontSize: t.chartLabel,
+    fontWeight: "700"
+  },
+  chartMetaRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 4
+  },
+  chartMetaValue: {
+    color: colors.text,
+    fontSize: t.subtitle,
+    fontWeight: "900",
+    marginTop: 4
+  },
   container: {
     backgroundColor: colors.background,
     gap: 18,
     padding: 18,
     paddingBottom: 32
   },
-  chartBar: {
-    backgroundColor: colors.primary,
-    borderRadius: 999,
-    width: "100%"
-  },
-  chartCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 16
-  },
-  chartDate: {
-    color: colors.muted,
-    fontSize: 10,
-    marginTop: 4
-  },
-  chartItem: {
-    alignItems: "center",
-    flex: 1
-  },
-  chartRow: {
-    alignItems: "flex-end",
-    flexDirection: "row",
-    gap: 8,
-    height: 132
-  },
-  chartTrack: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceHigh,
-    borderRadius: 999,
-    height: 86,
-    justifyContent: "flex-end",
-    overflow: "hidden",
-    width: 16
-  },
-  chartValue: {
-    color: colors.text,
-    fontSize: 11,
-    fontWeight: "900",
-    marginTop: 6
-  },
   description: {
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: t.body,
+    lineHeight: t.lineCaption,
     marginTop: 10
   },
   difficulty: {
@@ -290,7 +410,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceHigh,
     borderRadius: 999,
     color: colors.primary,
-    fontSize: 13,
+    fontSize: t.caption,
     fontWeight: "800",
     overflow: "hidden",
     paddingHorizontal: 10,
@@ -303,13 +423,13 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: colors.muted,
-    fontSize: 16
+    fontSize: t.body
   },
   header: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderWidth: 1,
     borderRadius: 22,
+    borderWidth: 1,
     padding: 20
   },
   historyCard: {
@@ -322,43 +442,60 @@ const styles = StyleSheet.create({
   },
   historyDate: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: t.body,
     fontWeight: "700"
   },
   historyMain: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: t.subtitle,
     fontWeight: "800",
     marginTop: 4
+  },
+  historySub: {
+    color: colors.muted,
+    fontSize: t.body,
+    fontWeight: "600",
+    marginTop: 2
+  },
+  lineChart: {
+    borderRadius: 14,
+    marginHorizontal: -4,
+    paddingRight: 0
   },
   list: {
     gap: 10
   },
   note: {
     color: colors.muted,
-    fontSize: 15
+    fontSize: t.body
+  },
+  scopeHint: {
+    color: colors.blue,
+    fontSize: t.body,
+    fontWeight: "700",
+    marginTop: 10
   },
   sectionTitle: {
     color: colors.text,
-    fontSize: 20,
+    fontSize: t.title,
     fontWeight: "900"
   },
   statCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderWidth: 1,
     borderRadius: 18,
+    borderWidth: 1,
     flex: 1,
     padding: 16
   },
   statLabel: {
     color: colors.muted,
-    fontSize: 13,
+    fontSize: t.caption,
     fontWeight: "800"
   },
   statValue: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: t.subtitle,
     fontWeight: "900",
     marginTop: 6
   },
@@ -368,13 +505,13 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: colors.muted,
-    fontSize: 16,
+    fontSize: t.body,
     marginTop: 4,
     textTransform: "capitalize"
   },
   title: {
     color: colors.text,
-    fontSize: 28,
+    fontSize: t.display,
     fontWeight: "900"
   }
 });

@@ -93,6 +93,8 @@ export type PlannedExercise = {
   suggestedSets: number;
   suggestedReps?: number;
   suggestedRepsLabel?: string;
+  /** Dla ćwiczeń bez kg: górny limit powtórzeń przy progresji (+1 na trening). */
+  targetReps?: number;
   setBlocks?: PlannedSetBlock[];
   progressionStepKg?: number;
   progressionType?: ExerciseProgressionType;
@@ -114,6 +116,8 @@ export type WorkoutSession = {
   workoutDayId?: string;
   date: string;
   sets: ExerciseSet[];
+  /** Po przycisku Koniec — wtedy sesja liczy sie do progresji przy kolejnym wejsciu tego samego dnia. */
+  completed?: boolean;
   createdAt: string;
   updatedAt: string;
 };

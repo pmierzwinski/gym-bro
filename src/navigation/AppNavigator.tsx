@@ -14,7 +14,7 @@ export type RootStackParamList = {
   Home: undefined;
   AddExercise: undefined;
   TodayWorkout: { workoutDayId?: string } | undefined;
-  ExerciseDetails: { exerciseId: string };
+  ExerciseDetails: { exerciseId: string; workoutDayId?: string };
   WorkoutPlan: undefined;
   WorkoutEditor: { workoutDayId?: string };
   CoachSuggestions: undefined;
@@ -49,7 +49,10 @@ export function AppNavigator() {
         <Stack.Screen
           component={TodayWorkoutScreen}
           name="TodayWorkout"
-          options={{ title: "Dzisiejszy trening" }}
+          options={{
+            contentStyle: { flex: 1 },
+            title: "Dzisiejszy trening"
+          }}
         />
         <Stack.Screen
           component={ExerciseDetailsScreen}
@@ -59,7 +62,7 @@ export function AppNavigator() {
         <Stack.Screen
           component={WorkoutPlanScreen}
           name="WorkoutPlan"
-          options={{ title: "Plan treningowy" }}
+          options={{ title: "Moje treningi" }}
         />
         <Stack.Screen
           component={WorkoutEditorScreen}

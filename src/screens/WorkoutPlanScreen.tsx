@@ -11,6 +11,7 @@ import {
   getWorkoutDays
 } from "../storage/trainingStorage";
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 import type { Exercise, PlannedExercise, WorkoutDay } from "../types/training";
 import { summarizeSetBlocks } from "../utils/workout";
 
@@ -23,8 +24,10 @@ function formatPlannedExercise(planned: PlannedExercise) {
   const progression = planned.progressionStepKg
     ? `, +${planned.progressionStepKg} kg gdy zaliczone`
     : "";
+  const bwGoal =
+    planned.targetReps != null ? ` · cel BW ${planned.targetReps} powt.` : "";
 
-  return `${summarizeSetBlocks(planned)} · cel ${weight}${progression}`;
+  return `${summarizeSetBlocks(planned)} · cel ${weight}${progression}${bwGoal}`;
 }
 
 export function WorkoutPlanScreen({ navigation }: Props) {
@@ -58,10 +61,10 @@ export function WorkoutPlanScreen({ navigation }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Plan</Text>
+        <Text style={styles.eyebrow}>Edycja</Text>
         <Text style={styles.title}>Moje treningi</Text>
         <Text style={styles.subtitle}>
-          Tu edytujesz treningi, ktore pozniej wybierasz z ekranu glownego.
+          Dodaj trening lub edytuj cwiczenia — na koniec wybierasz dzien na ekranie glownym.
         </Text>
       </View>
 
@@ -79,8 +82,10 @@ export function WorkoutPlanScreen({ navigation }: Props) {
           return (
             <View key={day.id} style={styles.dayCard}>
               <View style={styles.dayHeader}>
-                <View>
-                  <Text style={styles.dayTitle}>{day.name}</Text>
+                <View style={styles.dayHeaderText}>
+                  <Text style={styles.dayTitle} numberOfLines={2}>
+                    {day.name}
+                  </Text>
                   <Text style={styles.dayMeta}>
                     {plannedForDay.length} cwiczenia w kolejnosci
                   </Text>
@@ -109,10 +114,21 @@ export function WorkoutPlanScreen({ navigation }: Props) {
                       <Text style={styles.exerciseName}>
                         {exercise?.name ?? "Cwiczenie"}
                       </Text>
-                      <Text style={styles.exercisePlan}>
+                      <Text style={styles.exercisePlan} numberOfLines={3}>
                         {formatPlannedExercise(planned)}
                       </Text>
                     </View>
+                    <PrimaryButton
+                      onPress={() =>
+                        navigation.navigate("ExerciseDetails", {
+                          exerciseId: planned.exerciseId,
+                          workoutDayId: day.id
+                        })
+                      }
+                      title="Historia"
+                      variant="secondary"
+                      style={styles.historyButton}
+                    />
                   </View>
                 );
               })}
@@ -145,14 +161,18 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: "space-between"
   },
+  dayHeaderText: {
+    flex: 1,
+    minWidth: 0
+  },
   dayMeta: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: t.body,
     marginTop: 4
   },
   dayTitle: {
     color: colors.text,
-    fontSize: 21,
+    fontSize: t.subtitle,
     fontWeight: "900"
   },
   editButton: {
@@ -161,26 +181,32 @@ const styles = StyleSheet.create({
   },
   exerciseName: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: t.body,
     fontWeight: "900"
   },
   exercisePlan: {
     color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: t.caption,
+    lineHeight: t.lineCaption,
     marginTop: 3
   },
   exerciseRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 12
+    gap: 10
   },
   exerciseTextWrap: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
+  },
+  historyButton: {
+    flexShrink: 0,
+    minHeight: 38,
+    paddingHorizontal: 12
   },
   eyebrow: {
     color: colors.primary,
-    fontSize: 13,
+    fontSize: t.caption,
     fontWeight: "900",
     textTransform: "uppercase"
   },
@@ -206,17 +232,18 @@ const styles = StyleSheet.create({
   },
   orderText: {
     color: colors.primary,
+    fontSize: t.caption,
     fontWeight: "900"
   },
   subtitle: {
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: t.body,
+    lineHeight: t.lineCaption,
     marginTop: 8
   },
   title: {
     color: colors.text,
-    fontSize: 30,
+    fontSize: t.display,
     fontWeight: "900",
     marginTop: 4
   }

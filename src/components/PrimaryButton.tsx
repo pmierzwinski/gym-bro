@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, ViewStyle } from "react-native";
 
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 
 type PrimaryButtonProps = {
   title: string;
@@ -24,6 +25,7 @@ export function PrimaryButton({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
+      hitSlop={8}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
@@ -57,9 +59,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     justifyContent: "center",
-    minHeight: 52,
-    paddingHorizontal: 18,
-    paddingVertical: 14
+    minHeight: 46,
+    paddingHorizontal: 14,
+    paddingVertical: 11
   },
   disabledButton: {
     backgroundColor: "#2b3344"
@@ -89,7 +91,7 @@ const styles = StyleSheet.create({
   },
   text: {
     color: "#111827",
-    fontSize: 16,
+    fontSize: t.button,
     fontWeight: "700"
   }
 });

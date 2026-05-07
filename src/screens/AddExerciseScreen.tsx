@@ -7,6 +7,7 @@ import { currentTrainingGroupId, currentUserId } from "../data/mockData";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { saveExercise } from "../storage/trainingStorage";
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 import type { Exercise, MuscleGroup } from "../types/training";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AddExercise">;
@@ -47,9 +48,15 @@ export function AddExerciseScreen({ navigation }: Props) {
       updatedAt: now
     };
 
-    await saveExercise(exercise);
-    setIsSaving(false);
-    navigation.goBack();
+    try {
+      await saveExercise(exercise);
+      navigation.goBack();
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Blad", "Nie udalo sie zapisac cwiczenia.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -127,13 +134,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     color: colors.text,
-    fontSize: 18,
-    minHeight: 52,
-    paddingHorizontal: 14
+    fontSize: t.subtitle,
+    minHeight: 46,
+    paddingHorizontal: 12
   },
   label: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: t.body,
     fontWeight: "800"
   },
   textArea: {
@@ -143,7 +150,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 28,
+    fontSize: t.display,
     fontWeight: "900"
   }
 });

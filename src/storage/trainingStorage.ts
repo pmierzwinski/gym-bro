@@ -1,4 +1,10 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
+import {
+  documentDirectory,
+  getInfoAsync,
+  readAsStringAsync,
+  writeAsStringAsync
+} from "expo-file-system/legacy";
 
 import {
   mockCoachSuggestions,
@@ -21,14 +27,159 @@ const STORAGE_KEYS = {
   plannedExercises: "gym-bro:planned-exercises",
   workoutSessions: "gym-bro:workout-sessions",
   coachSuggestions: "gym-bro:coach-suggestions",
-  lastWorkoutDayId: "gym-bro:last-workout-day-id"
+  lastWorkoutDayId: "gym-bro:last-workout-day-id",
+  workoutFailurePrompt: "gym-bro:workout-failure-prompt"
+};
+
+const NATIVE_STORE_FILE = "gym-bro-persist.json";
+
+let nativeLock = Promise.resolve();
+
+function withNativeLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = nativeLock.then(fn);
+  nativeLock = next.then(() => {}).catch(() => {});
+  return next;
+}
+
+function getNativeStoreUri(): string {
+  const dir = documentDirectory;
+  if (!dir) {
+    throw new Error("expo-file-system: brak documentDirectory");
+  }
+
+  return `${dir}${NATIVE_STORE_FILE}`;
+}
+
+async function readNativeStore(): Promise<Record<string, string>> {
+  const uri = getNativeStoreUri();
+  const info = await getInfoAsync(uri);
+
+  if (!info.exists) {
+    return {};
+  }
+
+  const raw = await readAsStringAsync(uri);
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeNativeStore(store: Record<string, string>): Promise<void> {
+  await writeAsStringAsync(getNativeStoreUri(), JSON.stringify(store));
+}
+
+let migrationFromAsyncAttempted = false;
+
+async function migrateFromAsyncStorageIfNeededLocked(): Promise<void> {
+  if (Platform.OS === "web" || migrationFromAsyncAttempted) {
+    return;
+  }
+
+  migrationFromAsyncAttempted = true;
+
+  const existing = await readNativeStore();
+  if (Object.keys(existing).length > 0) {
+    return;
+  }
+
+  try {
+    const mod = await import("@react-native-async-storage/async-storage");
+    const AS = mod.default;
+    const merged: Record<string, string> = { ...existing };
+
+    for (const key of Object.values(STORAGE_KEYS)) {
+      try {
+        const value = await AS.getItem(key);
+        if (value != null) {
+          merged[key] = value;
+        }
+      } catch {
+        /* pojedynczy klucz — ignoruj */
+      }
+    }
+
+    await writeNativeStore(merged);
+  } catch {
+    /* natywny AsyncStorage niedostepny — zostaje pusty plik, readJson uzupelni mockami */
+  }
+}
+
+async function storageGetItem(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    try {
+      return typeof globalThis.localStorage !== "undefined"
+        ? globalThis.localStorage.getItem(key)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return withNativeLock(async () => {
+    await migrateFromAsyncStorageIfNeededLocked();
+    const store = await readNativeStore();
+
+    return store[key] ?? null;
+  });
+}
+
+async function storageSetItem(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    try {
+      if (typeof globalThis.localStorage !== "undefined") {
+        globalThis.localStorage.setItem(key, value);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return;
+  }
+
+  return withNativeLock(async () => {
+    await migrateFromAsyncStorageIfNeededLocked();
+    const store = await readNativeStore();
+    store[key] = value;
+    await writeNativeStore(store);
+  });
+}
+
+async function storageRemoveItem(key: string): Promise<void> {
+  if (Platform.OS === "web") {
+    try {
+      if (typeof globalThis.localStorage !== "undefined") {
+        globalThis.localStorage.removeItem(key);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return;
+  }
+
+  return withNativeLock(async () => {
+    await migrateFromAsyncStorageIfNeededLocked();
+    const store = await readNativeStore();
+    delete store[key];
+    await writeNativeStore(store);
+  });
+}
+
+export type WorkoutFailurePromptState = {
+  plannedIds: string[];
+  exerciseNames: string[];
 };
 
 async function readJson<T>(key: string, fallback: T): Promise<T> {
-  const rawValue = await AsyncStorage.getItem(key);
+  const rawValue = await storageGetItem(key);
 
   if (!rawValue) {
-    await AsyncStorage.setItem(key, JSON.stringify(fallback));
+    await storageSetItem(key, JSON.stringify(fallback));
     return fallback;
   }
 
@@ -36,7 +187,7 @@ async function readJson<T>(key: string, fallback: T): Promise<T> {
 }
 
 async function writeJson<T>(key: string, value: T): Promise<void> {
-  await AsyncStorage.setItem(key, JSON.stringify(value));
+  await storageSetItem(key, JSON.stringify(value));
 }
 
 export async function getExercises(): Promise<Exercise[]> {
@@ -84,7 +235,7 @@ export async function deleteWorkoutDay(workoutDayId: string): Promise<void> {
   );
 
   if (lastWorkoutDayId === workoutDayId) {
-    await AsyncStorage.removeItem(STORAGE_KEYS.lastWorkoutDayId);
+    await storageRemoveItem(STORAGE_KEYS.lastWorkoutDayId);
   }
 }
 
@@ -102,12 +253,37 @@ export async function savePlannedExercises(
 }
 
 export async function getLastWorkoutDayId(): Promise<string | undefined> {
-  const lastWorkoutDayId = await AsyncStorage.getItem(STORAGE_KEYS.lastWorkoutDayId);
+  const lastWorkoutDayId = await storageGetItem(STORAGE_KEYS.lastWorkoutDayId);
+
   return lastWorkoutDayId ?? undefined;
 }
 
 export async function saveLastWorkoutDayId(workoutDayId: string): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEYS.lastWorkoutDayId, workoutDayId);
+  await storageSetItem(STORAGE_KEYS.lastWorkoutDayId, workoutDayId);
+}
+
+export async function getWorkoutFailurePrompt(): Promise<
+  WorkoutFailurePromptState | undefined
+> {
+  const raw = await storageGetItem(STORAGE_KEYS.workoutFailurePrompt);
+
+  if (!raw) {
+    return undefined;
+  }
+
+  return JSON.parse(raw) as WorkoutFailurePromptState;
+}
+
+export async function setWorkoutFailurePrompt(
+  value: WorkoutFailurePromptState | undefined
+): Promise<void> {
+  if (!value) {
+    await storageRemoveItem(STORAGE_KEYS.workoutFailurePrompt);
+
+    return;
+  }
+
+  await storageSetItem(STORAGE_KEYS.workoutFailurePrompt, JSON.stringify(value));
 }
 
 export async function getWorkoutSessions(): Promise<WorkoutSession[]> {

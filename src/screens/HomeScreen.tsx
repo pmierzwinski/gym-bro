@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,15 +19,20 @@ import {
   getLastWorkoutDayId,
   getPlannedExercises,
   getWorkoutDays,
-  getWorkoutSessions
+  getWorkoutFailurePrompt,
+  getWorkoutSessions,
+  savePlannedExercises,
+  setWorkoutFailurePrompt
 } from "../storage/trainingStorage";
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 import type {
   Exercise,
   PlannedExercise,
   WorkoutDay,
   WorkoutSession
 } from "../types/training";
+import { applyPlannedDeloadForNextSession } from "../utils/workout";
 
 type Props = Readonly<NativeStackScreenProps<RootStackParamList, "Home">>;
 
@@ -68,6 +74,39 @@ export function HomeScreen({ navigation }: Props) {
           );
           setLastWorkoutDayId(loadedLastWorkoutDayId);
         }
+
+        const prompt = await getWorkoutFailurePrompt();
+
+        if (!isActive || !prompt) {
+          return;
+        }
+
+        Alert.alert(
+          "Trening",
+          `Nie udalo sie zrobic cwiczen: ${prompt.exerciseNames.join(", ")}. Czy chcesz cofnac sie w treningach?`,
+          [
+            {
+              text: "Zostaw plan",
+              onPress: () => {
+                void setWorkoutFailurePrompt(undefined);
+              }
+            },
+            {
+              text: "Cofnij obciazenia",
+              onPress: async () => {
+                const planned = await getPlannedExercises();
+                const next = planned.map((entry) =>
+                  prompt.plannedIds.includes(entry.id)
+                    ? applyPlannedDeloadForNextSession(entry)
+                    : entry
+                );
+                await savePlannedExercises(next);
+                await setWorkoutFailurePrompt(undefined);
+                setPlannedExercises(await getPlannedExercises());
+              }
+            }
+          ]
+        );
       }
 
       loadData();
@@ -165,33 +204,39 @@ export function HomeScreen({ navigation }: Props) {
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.hero}>
         <View style={styles.heroTop}>
-          <View>
+          <View style={styles.heroTitles}>
             <Text style={styles.eyebrow}>Gym Bro</Text>
             <Text style={styles.title}>Wybierz trening</Text>
           </View>
-          <Pressable
-            onPress={() => setIsMenuOpen((current) => !current)}
-            style={styles.menuButton}
-          >
-            <Text style={styles.menuIcon}>☰</Text>
-          </Pressable>
+          <View style={styles.heroActions}>
+            <Pressable
+              accessibilityLabel="Dodaj trening"
+              onPress={() => navigation.navigate("WorkoutEditor", {})}
+              style={({ pressed }) => [
+                styles.addWorkoutTiny,
+                pressed && styles.pressed
+              ]}
+            >
+              <Text style={styles.addWorkoutTinyText}>+</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setIsMenuOpen((current) => !current)}
+              style={styles.menuButton}
+            >
+              <Text style={styles.menuIcon}>☰</Text>
+            </Pressable>
+          </View>
         </View>
         <Text style={styles.description}>
-          Startujesz od treningu, nie od pojedynczego cwiczenia. W srodku tylko
-          poprawiasz kg/powtorzenia i zatwierdzasz.
+          Startujesz od treningu. W srodku poprawiasz kg/powtorzenia i zatwierdzasz seriami.
         </Text>
       </View>
 
       {isMenuOpen ? (
         <View style={styles.menuPanel}>
           <PrimaryButton
-            onPress={() => navigation.navigate("WorkoutEditor", {})}
-            title="Dodaj trening"
-            variant="secondary"
-          />
-          <PrimaryButton
             onPress={() => navigation.navigate("WorkoutPlan")}
-            title="Edytuj plan"
+            title="Moje treningi"
             variant="secondary"
           />
         </View>
@@ -235,7 +280,9 @@ export function HomeScreen({ navigation }: Props) {
                 <Text style={styles.badge}>{badgeLabel}</Text>
               ) : null}
             </View>
-            <Text style={styles.workoutSummary}>{getWorkoutSummary(day)}</Text>
+            <Text style={styles.workoutSummary} numberOfLines={4}>
+              {getWorkoutSummary(day)}
+            </Text>
 
             {isSelected ? (
               <View style={styles.previewPanel}>
@@ -277,13 +324,30 @@ const styles = StyleSheet.create({
   actions: {
     gap: 12
   },
+  addWorkoutTiny: {
+    alignItems: "center",
+    backgroundColor: "rgba(245, 200, 76, 0.12)",
+    borderColor: colors.primary,
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 40
+  },
+  addWorkoutTinyText: {
+    color: colors.primary,
+    fontSize: 22,
+    fontWeight: "800",
+    lineHeight: 24,
+    marginTop: -2
+  },
   badge: {
     backgroundColor: "rgba(245, 200, 76, 0.14)",
     borderColor: colors.primary,
     borderRadius: 999,
     borderWidth: 1,
     color: colors.primary,
-    fontSize: 12,
+    fontSize: t.caption,
     fontWeight: "900",
     overflow: "hidden",
     paddingHorizontal: 10,
@@ -307,13 +371,13 @@ const styles = StyleSheet.create({
   },
   description: {
     color: colors.muted,
-    fontSize: 16,
-    lineHeight: 23,
+    fontSize: t.body,
+    lineHeight: t.lineBody,
     marginTop: 8
   },
   eyebrow: {
     color: colors.primary,
-    fontSize: 14,
+    fontSize: t.caption,
     fontWeight: "800",
     textTransform: "uppercase"
   },
@@ -330,6 +394,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12
   },
+  heroTitles: {
+    flex: 1,
+    minWidth: 0
+  },
+  heroActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: 8
+  },
   list: {
     gap: 12
   },
@@ -339,13 +413,13 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 14,
     borderWidth: 1,
-    height: 48,
+    height: 40,
     justifyContent: "center",
-    width: 48
+    width: 40
   },
   menuIcon: {
     color: colors.text,
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: "900"
   },
   menuPanel: {
@@ -365,12 +439,12 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: colors.text,
-    fontSize: 20,
+    fontSize: t.title,
     fontWeight: "800"
   },
   title: {
     color: colors.text,
-    fontSize: 30,
+    fontSize: t.display,
     fontWeight: "900",
     marginTop: 4
   },
@@ -379,13 +453,13 @@ const styles = StyleSheet.create({
   },
   previewMeta: {
     color: colors.primary,
-    fontSize: 13,
+    fontSize: t.caption,
     fontWeight: "900"
   },
   previewName: {
     color: colors.text,
     flex: 1,
-    fontSize: 14,
+    fontSize: t.body,
     fontWeight: "800"
   },
   previewPanel: {
@@ -407,8 +481,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     color: colors.text,
-    fontSize: 14,
-    minHeight: 42,
+    fontSize: t.body,
+    minHeight: 40,
     opacity: 0.72,
     paddingHorizontal: 14
   },
@@ -429,18 +503,18 @@ const styles = StyleSheet.create({
   },
   workoutMeta: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: t.body,
     marginTop: 4
   },
   workoutName: {
     color: colors.text,
-    fontSize: 21,
+    fontSize: t.subtitle,
     fontWeight: "900"
   },
   workoutSummary: {
     color: colors.muted,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: t.body,
+    lineHeight: t.lineCaption,
     marginTop: 12
   }
 });

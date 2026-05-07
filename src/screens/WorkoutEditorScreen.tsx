@@ -24,13 +24,14 @@ import {
   saveWorkoutDay
 } from "../storage/trainingStorage";
 import { colors } from "../theme/colors";
+import { type as t } from "../theme/typography";
 import type {
   Exercise,
   PlannedExercise,
   PlannedSetBlock,
   WorkoutDay
 } from "../types/training";
-import { summarizeSetBlocks } from "../utils/workout";
+import { isRepBasedPlan, summarizeSetBlocks } from "../utils/workout";
 
 type Props = Readonly<NativeStackScreenProps<RootStackParamList, "WorkoutEditor">>;
 type EditablePlannedExercise = PlannedExercise & { localKey: string };
@@ -79,6 +80,7 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
   const [expandedItemKey, setExpandedItemKey] = useState<string>();
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState("");
+  const [isExerciseNameEditing, setIsExerciseNameEditing] = useState(false);
   const [newTechnique, setNewTechnique] = useState("");
   const [draftProgressionStepKg, setDraftProgressionStepKg] = useState("2.5");
   const [draftDeloadSteps, setDraftDeloadSteps] = useState("");
@@ -162,17 +164,53 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
     setExpandedItemKey(undefined);
   }
 
+  function resetNewExerciseDraft() {
+    setNewExerciseName("");
+    setIsExerciseNameEditing(false);
+    setNewTechnique("");
+    setDraftProgressionStepKg("2.5");
+    setDraftDeloadSteps("");
+    setDraftBlocks([createDefaultBlock()]);
+  }
+
+  function discardNewExerciseDraft() {
+    resetNewExerciseDraft();
+    setIsAddPanelOpen(false);
+  }
+
+  function selectExerciseSuggestion(exercise: Exercise) {
+    setNewExerciseName(exercise.name);
+    setIsExerciseNameEditing(false);
+  }
+
+  function updateNewExerciseName(value: string) {
+    setNewExerciseName(value);
+    setIsExerciseNameEditing(true);
+  }
+
   async function createAndAddExercise() {
-    if (!newExerciseName.trim()) {
+    const trimmedName = newExerciseName.trim();
+
+    if (!trimmedName) {
       Alert.alert("Brakuje nazwy", "Wpisz nazwe cwiczenia.");
-      return;
+      return false;
+    }
+
+    const existingExercise = exercises.find(
+      (exercise) => exercise.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (existingExercise) {
+      addExerciseToWorkout(existingExercise);
+      resetNewExerciseDraft();
+      return true;
     }
 
     const now = new Date().toISOString();
     const exercise: Exercise = {
       id: `exercise-${Date.now()}`,
       trainingGroupId: currentTrainingGroupId,
-      name: newExerciseName.trim(),
+      name: trimmedName,
       muscleGroup: "inne",
       techniqueDescription: newTechnique.trim() || undefined,
       createdByUserId: currentUserId,
@@ -180,11 +218,25 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
       updatedAt: now
     };
 
-    await saveExercise(exercise);
-    setExercises(await getExercises());
-    addExerciseToWorkout(exercise);
-    setNewExerciseName("");
-    setNewTechnique("");
+    try {
+      await saveExercise(exercise);
+      setExercises(await getExercises());
+      addExerciseToWorkout(exercise);
+      resetNewExerciseDraft();
+      return true;
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Blad", "Nie udalo sie zapisac cwiczenia.");
+      return false;
+    }
+  }
+
+  async function saveNewExerciseAndClose() {
+    const wasAdded = await createAndAddExercise();
+
+    if (wasAdded) {
+      setIsAddPanelOpen(false);
+    }
   }
 
   function updateItem(localKey: string, patch: Partial<EditablePlannedExercise>) {
@@ -196,6 +248,7 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
   const filteredExercises = exercises.filter((exercise) =>
     exercise.name.toLowerCase().includes(newExerciseName.trim().toLowerCase())
   );
+  const isEditingWorkout = Boolean(route.params?.workoutDayId);
 
   function updateDraftBlock(blockId: string, patch: Partial<PlannedSetBlock>) {
     setDraftBlocks((current) => updateBlockList(current, blockId, patch));
@@ -305,6 +358,7 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
         progressionStepKg: item.progressionStepKg ?? 2.5,
         progressionStepPercent: item.progressionStepPercent ?? 10,
         deloadStepsOnFail: item.deloadStepsOnFail,
+        targetReps: item.targetReps,
         updatedAt: now
       };
     });
@@ -411,6 +465,22 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
                       }
                     />
                   </View>
+
+                  {isRepBasedPlan(item) ? (
+                    <InputBox
+                      label="Cel powt. (progres BW, opcj.)"
+                      value={
+                        item.targetReps === undefined ? "" : String(item.targetReps)
+                      }
+                      onChangeText={(value) =>
+                        updateItem(item.localKey, {
+                          targetReps: value
+                            ? Math.max(1, Math.round(toNumber(value, 1)))
+                            : undefined
+                        })
+                      }
+                    />
+                  ) : null}
 
                   <Text style={styles.blockTitle}>Serie</Text>
                   <View style={styles.blockList}>
@@ -538,14 +608,14 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
 
                   <View style={styles.inlineActions}>
                     <PrimaryButton
-                      onPress={() => setExpandedItemKey(undefined)}
-                      title="Zapisz i zwin"
-                      style={styles.inlineButton}
-                    />
-                    <PrimaryButton
                       onPress={() => removeItem(item.localKey)}
                       title="Usun"
                       variant="danger"
+                      style={styles.inlineButton}
+                    />
+                    <PrimaryButton
+                      onPress={() => setExpandedItemKey(undefined)}
+                      title="Zapisz i zwin"
                       style={styles.inlineButton}
                     />
                   </View>
@@ -566,26 +636,33 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
         <View style={styles.addPanel}>
           <Text style={styles.blockTitle}>Dodaj cwiczenie</Text>
           <TextInput
-            onChangeText={setNewExerciseName}
+            onChangeText={updateNewExerciseName}
+            onFocus={() => setIsExerciseNameEditing(true)}
             placeholder="Zacznij pisac albo wybierz z listy"
             placeholderTextColor={colors.muted}
             style={styles.input}
             value={newExerciseName}
           />
-          <View style={styles.suggestionsBox}>
-            {filteredExercises.map((exercise) => (
-              <Pressable
-                key={exercise.id}
-                onPress={() => addExerciseToWorkout(exercise)}
-                style={styles.suggestionRow}
-              >
-                <Text style={styles.suggestionName}>{exercise.name}</Text>
-                <Text style={styles.suggestionMeta}>
-                  {exercise.techniqueDescription ?? "Dodaj do treningu"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          {isExerciseNameEditing ? (
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              style={styles.suggestionsBox}
+            >
+              {filteredExercises.map((exercise) => (
+                <Pressable
+                  key={exercise.id}
+                  onPress={() => selectExerciseSuggestion(exercise)}
+                  style={styles.suggestionRow}
+                >
+                  <Text style={styles.suggestionName}>{exercise.name}</Text>
+                  <Text style={styles.suggestionMeta}>
+                    {exercise.techniqueDescription ?? "Uzupelnij nazwe"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
           <TextInput
             multiline
             onChangeText={setNewTechnique}
@@ -733,16 +810,38 @@ export function WorkoutEditorScreen({ navigation, route }: Props) {
               style={styles.inlineButton}
             />
           </View>
-          <PrimaryButton onPress={createAndAddExercise} title="Dodaj" />
+          <View style={styles.inlineActions}>
+            <PrimaryButton
+              onPress={discardNewExerciseDraft}
+              title="Usun"
+              variant="danger"
+              style={styles.inlineButton}
+            />
+            <PrimaryButton
+              onPress={saveNewExerciseAndClose}
+              title="Zapisz i zwin"
+              style={styles.inlineButton}
+            />
+          </View>
         </View>
       ) : null}
 
+      {isAddPanelOpen ? (
+        <PrimaryButton
+          onPress={createAndAddExercise}
+          title="Dodaj kolejne"
+          variant="secondary"
+        />
+      ) : null}
+
       <PrimaryButton onPress={saveWorkout} title="Zapisz trening" />
-      <PrimaryButton
-        onPress={handleDeleteWorkout}
-        title="Usun trening"
-        variant="danger"
-      />
+      {isEditingWorkout ? (
+        <PrimaryButton
+          onPress={handleDeleteWorkout}
+          title="Usun trening"
+          variant="danger"
+        />
+      ) : null}
     </ScrollView>
   );
 }
@@ -788,7 +887,7 @@ const styles = StyleSheet.create({
   blockKind: {
     color: colors.primary,
     flex: 1,
-    fontSize: 15,
+    fontSize: t.body,
     fontWeight: "900"
   },
   blockList: {
@@ -796,7 +895,7 @@ const styles = StyleSheet.create({
   },
   blockTitle: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: t.subtitle,
     fontWeight: "900"
   },
   blockTypeButton: {
@@ -838,16 +937,17 @@ const styles = StyleSheet.create({
     gap: 8
   },
   exerciseText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   exerciseTitle: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: t.subtitle,
     fontWeight: "900"
   },
   eyebrow: {
     color: colors.primary,
-    fontSize: 13,
+    fontSize: t.caption,
     fontWeight: "900",
     textTransform: "uppercase"
   },
@@ -877,10 +977,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     color: colors.text,
-    fontSize: 18,
+    fontSize: t.subtitle,
     fontWeight: "800",
-    minHeight: 50,
-    paddingHorizontal: 12
+    minHeight: 46,
+    paddingHorizontal: 10
   },
   inputBox: {
     flexBasis: "45%",
@@ -888,7 +988,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: colors.muted,
-    fontSize: 12,
+    fontSize: t.chartLabel,
     fontWeight: "900",
     marginBottom: 6,
     textTransform: "uppercase"
@@ -910,24 +1010,24 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: colors.text,
-    fontSize: 19,
+    fontSize: t.title,
     fontWeight: "900"
   },
   summaryText: {
     color: colors.primary,
-    fontSize: 14,
+    fontSize: t.body,
     fontWeight: "800",
-    lineHeight: 20,
+    lineHeight: t.lineCaption,
     marginTop: 4
   },
   suggestionMeta: {
     color: colors.muted,
-    fontSize: 12,
+    fontSize: t.chartLabel,
     marginTop: 2
   },
   suggestionName: {
     color: colors.text,
-    fontSize: 15,
+    fontSize: t.body,
     fontWeight: "900"
   },
   suggestionRow: {
@@ -950,7 +1050,7 @@ const styles = StyleSheet.create({
   },
   titleInput: {
     color: colors.text,
-    fontSize: 30,
+    fontSize: t.display,
     fontWeight: "900",
     marginTop: 4,
     padding: 0
